@@ -1111,6 +1111,99 @@ fieldset.inspector:disabled {
   filter: drop-shadow(0 0 6px rgb(67 56 202 / 50%));
 }
 
+/* ---------- 证据贡献分摊 ---------- */
+
+.shapley-card {
+  border-color: #c4b5fd;
+}
+
+.shapley-evidence-list {
+  display: grid;
+  gap: 6px;
+  max-height: 168px;
+  padding: 8px 10px;
+  overflow-y: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.shapley-evidence-item {
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.shapley-failure {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  color: #991b1b;
+  background: #fef2f2;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.shapley-failure p {
+  margin: 0;
+}
+
+.shapley-failure .hint {
+  margin: 0;
+  color: #b91c1c;
+}
+
+.shapley-result {
+  margin-top: 10px;
+}
+
+.shapley-waterfall {
+  margin-top: 10px;
+}
+
+.shapley-waterfall svg {
+  display: block;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.shapley-row {
+  cursor: pointer;
+  outline: none;
+}
+
+.shapley-row-hit {
+  fill: transparent;
+}
+
+.shapley-row:hover .shapley-row-hit,
+.shapley-row:focus-visible .shapley-row-hit {
+  fill: rgb(79 70 229 / 6%);
+}
+
+.shapley-row.active .shapley-row-hit {
+  fill: rgb(79 70 229 / 10%);
+  stroke: rgb(79 70 229 / 45%);
+  stroke-width: 1;
+}
+
+.shapley-row:hover .shapley-bar {
+  filter: brightness(1.08);
+}
+
+.shapley-row.active .shapley-bar {
+  filter: drop-shadow(0 0 4px rgb(79 70 229 / 45%));
+}
+
+/* 画布上被瀑布条点击高亮的证据节点：紫色描边，区别于追踪 / 振荡高亮。 */
+.argument-node.shapley-focus {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 4px rgb(124 58 237 / 20%), 0 14px 30px rgb(76 29 149 / 22%);
+}
+
 @media (max-width: 980px) {
   .topbar {
     align-items: flex-start;

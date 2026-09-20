@@ -14,7 +14,13 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { api } from './api';
 import { ArgumentNode, nodeTypes, type ArgumentNodeData } from './components/ArgumentNode';
-import { SidePanel, graphToDocument, type SensitivitySelection, type TraceSelection } from './components/SidePanel';
+import {
+  SidePanel,
+  graphToDocument,
+  type SensitivitySelection,
+  type ShapleySelection,
+  type TraceSelection
+} from './components/SidePanel';
 import { ReplayBar } from './components/ReplayBar';
 import { buildRoundDecomposition } from './replay';
 import { planGraphLayout, formatDisplacement, type LayoutResult } from './layout';
@@ -26,6 +32,7 @@ import type {
   PropagateOptions,
   PropagateResult,
   SensitivityResult,
+  ShapleyResult,
   Stance,
   TraceResult
 } from '../../shared/graph';
@@ -33,6 +40,7 @@ import { stableSample, oscillatingSample } from './samples';
 
 const DEFAULT_OPTIONS: PropagateOptions = { threshold: 0.001, maxIterations: 200, lambda: 0.8 };
 const DEFAULT_TRACE_SELECTION: TraceSelection = { startNodeId: '', targetNodeId: '', maxHops: 8 };
+const DEFAULT_SHAPLEY_SELECTION: ShapleySelection = { claimNodeId: '', evidenceNodeIds: [] };
 
 type EdgeDecorMode = 'plain' | 'cycle' | 'trace-active';
 
@@ -153,6 +161,11 @@ export default function App() {
   const [traceTracing, setTraceTracing] = useState(false);
   const [traceStatus, setTraceStatus] = useState('');
   const [traceActiveIndex, setTraceActiveIndex] = useState(0);
+  const [shapleySelection, setShapleySelection] = useState<ShapleySelection>(DEFAULT_SHAPLEY_SELECTION);
+  const [shapleyResult, setShapleyResult] = useState<ShapleyResult | null>(null);
+  const [shapleyRunning, setShapleyRunning] = useState(false);
+  const [shapleyStatus, setShapleyStatus] = useState('');
+  const [shapleyActiveId, setShapleyActiveId] = useState<string | null>(null);
   const [layoutPreview, setLayoutPreview] = useState<LayoutPreview | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -213,6 +226,13 @@ export default function App() {
     setTraceResult(null);
     setTraceStatus('');
     setTraceActiveIndex(0);
+  }, []);
+
+  // 图、分摊选择或传播参数变化都会使分摊结果失效（联盟值与 Shapley 分摊都可能变化）。
+  const invalidateShapley = useCallback(() => {
+    setShapleyResult(null);
+    setShapleyStatus('');
+    setShapleyActiveId(null);
   }, []);
 
   // 还原画布到进入预览前的坐标，并清掉预览标记（纯视图回退，不保存、不写 SQLite）。
@@ -300,6 +320,7 @@ export default function App() {
       setPlaying(false);
       invalidateSensitivity();
       invalidateTrace();
+      invalidateShapley();
       setNodes(
         nextNodes.map((node) => ({
           ...node,
@@ -310,13 +331,14 @@ export default function App() {
             inCycle: false,
             inTrace: false,
             traceStart: false,
-            traceTarget: false
+            traceTarget: false,
+            shapleyFocus: false
           }
         }))
       );
       setEdges(nextEdges.map((edge) => decorateEdge({ ...edge, animated: false, style: undefined }, 'plain')));
     },
-    [edges, nodes, setEdges, setNodes, invalidateSensitivity, invalidateTrace]
+    [edges, nodes, setEdges, setNodes, invalidateSensitivity, invalidateTrace, invalidateShapley]
   );
 
   const onConnect = useCallback(
@@ -507,6 +529,8 @@ export default function App() {
     setSensitivitySelection({ edgeId: '', targetNodeId: '' });
     invalidateTrace();
     setTraceSelection(DEFAULT_TRACE_SELECTION);
+    invalidateShapley();
+    setShapleySelection(DEFAULT_SHAPLEY_SELECTION);
     if (nextOptions) setOptions(nextOptions);
     if (immediateSave) {
       setStatus('正在导入…');
@@ -619,8 +643,10 @@ export default function App() {
       invalidateSensitivity();
       // 路径分数虽不直接使用传播参数，但追踪与传播视图共用参数语境，参数编辑后一并失效。
       invalidateTrace();
+      // 分摊直接沿用当前传播参数重算每个联盟：参数一变，旧分摊立即失效。
+      invalidateShapley();
     },
-    [invalidateSensitivity, invalidateTrace]
+    [invalidateSensitivity, invalidateTrace, invalidateShapley]
   );
 
   const runTrace = useCallback(async () => {
@@ -674,6 +700,68 @@ export default function App() {
       };
     });
   }, [nodes]);
+
+  const runShapley = useCallback(async () => {
+    if (!shapleySelection.claimNodeId || shapleySelection.evidenceNodeIds.length === 0) return;
+    setShapleyRunning(true);
+    setShapleyStatus('正在服务端内存中重算全部证据联盟（不保存图）…');
+    try {
+      // 直接提交当前画布：分摊只在服务端内存中进行，不触发任何持久化。
+      const { shapley } = await api.shapleyContributions({
+        graph: graphToDocument(documentName, nodes, edges),
+        claimNodeId: shapleySelection.claimNodeId,
+        evidenceNodeIds: shapleySelection.evidenceNodeIds,
+        options
+      });
+      setShapleyResult(shapley);
+      setShapleyActiveId(null);
+      setShapleyStatus(shapley.message);
+    } catch (error) {
+      setShapleyResult(null);
+      setShapleyStatus(`分摊失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setShapleyRunning(false);
+    }
+  }, [documentName, edges, nodes, options, shapleySelection.claimNodeId, shapleySelection.evidenceNodeIds]);
+
+  // 分摊选择变化即清空已展示的结果（图 / 参数变化由 clearAnalysis 与 handleOptionsChange 负责）。
+  const handleShapleySelectionChange = useCallback(
+    (patch: Partial<ShapleySelection>) => {
+      setShapleySelection((current) => ({ ...current, ...patch }));
+      invalidateShapley();
+    },
+    [invalidateShapley]
+  );
+
+  // 观点 / 证据节点被删除或改类型后，清掉失效的分摊选择。
+  useEffect(() => {
+    setShapleySelection((current) => {
+      const claimExists =
+        !current.claimNodeId ||
+        nodes.some((node) => node.id === current.claimNodeId && node.data.kind === 'claim');
+      const evidence = current.evidenceNodeIds.filter((id) =>
+        nodes.some((node) => node.id === id && node.data.kind === 'evidence')
+      );
+      if (claimExists && evidence.length === current.evidenceNodeIds.length) return current;
+      return {
+        claimNodeId: claimExists ? current.claimNodeId : '',
+        evidenceNodeIds: evidence
+      };
+    });
+  }, [nodes]);
+
+  // 点击瀑布条 → 在画布上高亮对应证据节点（纯视图标记，不影响图数据与回放着色）。
+  useEffect(() => {
+    setNodes((current) => {
+      if (current.every((node) => Boolean(node.data.shapleyFocus) === (node.id === shapleyActiveId))) {
+        return current;
+      }
+      return current.map((node) => ({
+        ...node,
+        data: { ...node.data, shapleyFocus: node.id === shapleyActiveId }
+      }));
+    });
+  }, [shapleyActiveId, setNodes]);
 
   // 追踪高亮（优先）/负反馈环高亮 / 无高亮：由最近一次分析结果统一驱动，保证连线样式幂等。
   const cycleEdgeIds = useMemo(
@@ -927,6 +1015,18 @@ export default function App() {
             onActiveIndexChange: setTraceActiveIndex,
             onRun: runTrace,
             onClose: invalidateTrace
+          }}
+          shapley={{
+            selection: shapleySelection,
+            onSelectionChange: handleShapleySelectionChange,
+            result: shapleyResult,
+            running: shapleyRunning,
+            status: shapleyStatus,
+            activeNodeId: shapleyActiveId,
+            onToggleNode: (nodeId) =>
+              setShapleyActiveId((current) => (current === nodeId ? null : nodeId)),
+            onRun: runShapley,
+            onClose: invalidateShapley
           }}
         />
       </main>

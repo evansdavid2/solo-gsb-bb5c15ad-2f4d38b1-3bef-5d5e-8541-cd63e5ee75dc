@@ -22,6 +22,8 @@ export interface ArgumentNodeData {
   traceStart?: boolean;
   /** 当前高亮路径的终点（目标节点） */
   traceTarget?: boolean;
+  /** 证据贡献分摊中被点击高亮的证据节点 */
+  shapleyFocus?: boolean;
   [key: string]: unknown;
 }
 
@@ -53,6 +55,7 @@ export function ArgumentNode({ id, data, selected }: NodeProps<ArgumentNodeData>
         data.inTrace ? 'in-trace' : '',
         data.traceStart ? 'trace-start' : '',
         data.traceTarget ? 'trace-target' : '',
+        data.shapleyFocus ? 'shapley-focus' : '',
         data.anchored ? 'anchored' : '',
         data.positionLocked ? 'position-locked' : '',
         data.layoutPreview ? 'layout-preview-node' : ''

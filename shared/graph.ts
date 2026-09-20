@@ -187,3 +187,75 @@ export interface TraceRequest {
   /** 最大跳数，默认 8，范围 1–8 */
   maxHops?: number;
 }
+
+/** 证据贡献分摊中单个证据的 Shapley 分摊项 */
+export interface ShapleyContributionItem {
+  /** 证据节点 id */
+  nodeId: string;
+  /** 有符号贡献：精确 Shapley 值 φᵢ（正为净提升目标可信度，负为净压低） */
+  contribution: number;
+  /** 贡献绝对值（排序依据） */
+  absoluteContribution: number;
+  /** 占比 = 贡献 / (全联盟目标值 − 空联盟目标值)；总差为 0 时无法定义，为 null */
+  share: number | null;
+}
+
+/** 和式校验：Σ 各项贡献 应等于 全联盟 − 空联盟 的目标值差 */
+export interface ShapleySumCheck {
+  /** Σ 各项有符号贡献 */
+  sum: number;
+  /** 期望总和：v(全联盟) − v(空联盟) */
+  expected: number;
+  /** sum − expected */
+  difference: number;
+  /** 是否在数值容差内一致 */
+  matches: boolean;
+}
+
+/** 首个未收敛联盟的信息（整体不可计算时返回） */
+export interface ShapleyFailureInfo {
+  /** 该联盟包含的所选证据节点 id（空数组表示空联盟） */
+  evidenceIds: string[];
+  /** 失败类型：持续振荡 / 达到迭代上限 */
+  status: 'oscillating' | 'limit';
+  /** 实际停止轮次 */
+  iterations: number;
+  /** 该联盟传播结果的原始说明 */
+  reason: string;
+}
+
+export interface ShapleyResult {
+  /** 目标观点节点 id */
+  claimNodeId: string;
+  /** 参与分摊的证据节点 id（请求时的选择顺序） */
+  evidenceNodeIds: string[];
+  /** 实际重算的联盟总数 2^n */
+  coalitionCount: number;
+  /** 是否全部联盟收敛、分摊可用；false 时贡献相关字段均为 null */
+  computable: boolean;
+  /** 空联盟（移除全部所选证据）下目标观点的收敛值 */
+  baselineValue: number | null;
+  /** 全联盟（保留全部所选证据）下目标观点的收敛值 */
+  fullValue: number | null;
+  /** 全联盟 − 空联盟 的目标值差（被分摊的总量） */
+  totalDifference: number | null;
+  /** 按 |贡献| 降序、节点 id 升序稳定排序的分摊项 */
+  contributions: ShapleyContributionItem[] | null;
+  /** 和式校验 */
+  sumCheck: ShapleySumCheck | null;
+  /** 首个未收敛联盟（按联盟掩码升序评估）；可计算时为 null */
+  failure: ShapleyFailureInfo | null;
+  /** 本次分摊实际使用的传播参数 */
+  options: Required<PropagateOptions>;
+  message: string;
+}
+
+export interface ShapleyRequest {
+  /** 画布当前图：仅在内存中用于本次分摊，不会被保存或持久化 */
+  graph: GraphDocument;
+  /** 目标观点节点 id（kind 必须为 claim） */
+  claimNodeId: string;
+  /** 参与分摊的证据节点 id（1–8 个，kind 必须为 evidence） */
+  evidenceNodeIds: string[];
+  options?: PropagateOptions;
+}
