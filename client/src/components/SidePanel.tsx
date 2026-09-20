@@ -2,6 +2,8 @@ import type { Edge, Node } from 'reactflow';
 import type { ArgumentNodeData } from './ArgumentNode';
 import type { RoundDecomposition } from '../replay';
 import { SensitivityChart } from './SensitivityChart';
+import { ShapleyWaterfall } from './ShapleyWaterfall';
+import { MAX_SHAPLEY_EVIDENCE } from '../../../shared/graph';
 import type {
   GraphDocument,
   NodeKind,
@@ -9,6 +11,7 @@ import type {
   PropagateOptions,
   PropagateResult,
   SensitivityResult,
+  ShapleyResult,
   Stance,
   TraceResult
 } from '../../../shared/graph';
@@ -27,6 +30,11 @@ export interface TraceSelection {
   startNodeId: string;
   targetNodeId: string;
   maxHops: number;
+}
+
+export interface ShapleySelection {
+  targetNodeId: string;
+  evidenceNodeIds: string[];
 }
 
 interface SidePanelProps {
@@ -61,6 +69,18 @@ interface SidePanelProps {
     status: string;
     activeIndex: number;
     onActiveIndexChange: (index: number) => void;
+    onRun: () => void;
+    onClose: () => void;
+  };
+  shapley: {
+    selection: ShapleySelection;
+    onSelectionChange: (patch: Partial<ShapleySelection>) => void;
+    result: ShapleyResult | null;
+    computing: boolean;
+    status: string;
+    /** 当前在画布上高亮的证据节点 id（点击瀑布条切换） */
+    activeNodeId: string | null;
+    onActiveNodeChange: (nodeId: string) => void;
     onRun: () => void;
     onClose: () => void;
   };
@@ -198,6 +218,7 @@ export function SidePanel({
   graphEditingDisabled = false,
   sensitivity,
   trace,
+  shapley,
   nodes,
   edges
 }: SidePanelProps) {
@@ -332,6 +353,8 @@ export function SidePanel({
       />
 
       <TraceCard trace={trace} nodes={nodes} nodeLabelById={nodeLabelById} stanceText={stanceText} />
+
+      <ShapleyCard shapley={shapley} nodes={nodes} nodeLabelById={nodeLabelById} />
 
       {decomposition && selection.node && <DecompositionCard decomposition={decomposition} />}
 
@@ -597,6 +620,140 @@ function TraceCard({ trace, nodes, nodeLabelById, stanceText }: TraceCardProps) 
               ))}
             </ol>
           )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+type ShapleyCardProps = Pick<SidePanelProps, 'shapley' | 'nodes'> & {
+  nodeLabelById: Map<string, string>;
+};
+
+/** 证据贡献分摊卡片：选择一个观点与至多 8 个证据，按精确 Shapley 公式分摊目标值差。 */
+function ShapleyCard({ shapley, nodes, nodeLabelById }: ShapleyCardProps) {
+  const {
+    selection,
+    onSelectionChange,
+    result,
+    computing,
+    status,
+    activeNodeId,
+    onActiveNodeChange,
+    onRun,
+    onClose
+  } = shapley;
+
+  const claimNodes = nodes.filter((node) => node.data.kind === 'claim');
+  const evidenceNodes = nodes.filter((node) => node.data.kind === 'evidence');
+  const targetExists = claimNodes.some((node) => node.id === selection.targetNodeId);
+  const selectedIds = selection.evidenceNodeIds.filter((id) =>
+    evidenceNodes.some((node) => node.id === id)
+  );
+  const selectedCount = selectedIds.length;
+  const canRun = targetExists && selectedCount >= 1 && selectedCount <= MAX_SHAPLEY_EVIDENCE;
+  const coalitionCount = 1 << Math.min(selectedCount, MAX_SHAPLEY_EVIDENCE);
+
+  const toggleEvidence = (nodeId: string, checked: boolean) => {
+    const next = checked
+      ? [...selection.evidenceNodeIds, nodeId]
+      : selection.evidenceNodeIds.filter((id) => id !== nodeId);
+    onSelectionChange({ evidenceNodeIds: next });
+  };
+
+  return (
+    <section className="panel-card shapley-card">
+      <div className="sensitivity-heading">
+        <h2>证据贡献分摊</h2>
+        {result && (
+          <button type="button" className="sensitivity-close" onClick={onClose} title="关闭分摊结果">
+            ✕
+          </button>
+        )}
+      </div>
+
+      {claimNodes.length === 0 || evidenceNodes.length === 0 ? (
+        <p className="hint">先创建至少一个观点节点与一个证据节点，才能按 Shapley 公式分摊证据贡献。</p>
+      ) : (
+        <>
+          <Field label="目标观点（分摊其最终可信度）">
+            <select
+              value={targetExists ? selection.targetNodeId : ''}
+              onChange={(event) => onSelectionChange({ targetNodeId: event.target.value })}
+            >
+              {!targetExists && <option value="">请选择观点节点…</option>}
+              {claimNodes.map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.data.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={`参与证据（已选 ${selectedCount}/${MAX_SHAPLEY_EVIDENCE}，最多 ${MAX_SHAPLEY_EVIDENCE} 个）`}>
+            <div className="shapley-evidence-list">
+              {evidenceNodes.map((node) => {
+                const checked = selectedIds.includes(node.id);
+                const disabled = !checked && selectedCount >= MAX_SHAPLEY_EVIDENCE;
+                return (
+                  <label
+                    key={node.id}
+                    className={`checkbox shapley-evidence-item${disabled ? ' disabled' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={disabled}
+                      onChange={(event) => toggleEvidence(node.id, event.target.checked)}
+                    />
+                    <span>{node.data.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </Field>
+          <button type="button" className="primary sensitivity-run" disabled={!canRun || computing} onClick={onRun}>
+            {computing ? '分摊中…' : '运行贡献分摊'}
+          </button>
+          <p className="hint">
+            服务端在内存中删除未入盟的所选证据，对全部 2^{selectedCount} = {coalitionCount}{' '}
+            个联盟沿用当前传播参数逐一重算；任一联盟振荡或达到上限则整体不可计算。不会保存或改动当前图。
+          </p>
+          {status && <p className="sensitivity-status">{status}</p>}
+        </>
+      )}
+
+      {result?.computable && result.sumCheck && (
+        <div className="shapley-result">
+          <ShapleyWaterfall
+            result={result}
+            labelById={nodeLabelById}
+            activeNodeId={activeNodeId}
+            onToggle={onActiveNodeChange}
+          />
+          <p className={`shapley-sumcheck ${result.sumCheck.ok ? 'ok' : 'bad'}`}>
+            {result.sumCheck.ok ? '✓' : '✗'} 和式校验：Σφ = {signed(result.sumCheck.sum)}，v(全联盟) −
+            v(空联盟) = {signed(result.sumCheck.expected)}，差 {result.sumCheck.difference.toExponential(2)}
+          </p>
+          <p className="hint">点击瀑布条可在画布上高亮对应证据；再次点击取消。</p>
+        </div>
+      )}
+
+      {result && !result.computable && result.failure && (
+        <div className="shapley-failure">
+          <strong>
+            整体不可计算：{result.failure.status === 'oscillating' ? '持续振荡' : '达到迭代上限'}
+          </strong>
+          <p>
+            首个未收敛联盟：
+            {result.failure.coalition.length === 0
+              ? '空联盟（删除全部所选证据）'
+              : result.failure.coalition.map((id) => `「${nodeLabelById.get(id) ?? id}」`).join('、')}
+          </p>
+          <p>{result.failure.reason}。</p>
+          <p>
+            已评估 {result.coalitionsEvaluated}/{result.coalitionCount}{' '}
+            个联盟；未使用任何末轮值，请调整图或传播参数后重试。
+          </p>
         </div>
       )}
     </section>

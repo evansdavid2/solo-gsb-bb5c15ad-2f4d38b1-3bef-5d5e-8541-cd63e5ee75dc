@@ -22,6 +22,10 @@ export interface ArgumentNodeData {
   traceStart?: boolean;
   /** 当前高亮路径的终点（目标节点） */
   traceTarget?: boolean;
+  /** 证据贡献分摊的目标观点 */
+  shapleyTarget?: boolean;
+  /** 证据贡献分摊中点击瀑布条高亮的证据 */
+  shapleyHighlight?: boolean;
   [key: string]: unknown;
 }
 
@@ -53,6 +57,8 @@ export function ArgumentNode({ id, data, selected }: NodeProps<ArgumentNodeData>
         data.inTrace ? 'in-trace' : '',
         data.traceStart ? 'trace-start' : '',
         data.traceTarget ? 'trace-target' : '',
+        data.shapleyTarget ? 'shapley-target' : '',
+        data.shapleyHighlight ? 'shapley-highlight' : '',
         data.anchored ? 'anchored' : '',
         data.positionLocked ? 'position-locked' : '',
         data.layoutPreview ? 'layout-preview-node' : ''
@@ -71,6 +77,11 @@ export function ArgumentNode({ id, data, selected }: NodeProps<ArgumentNodeData>
           {data.traceTarget && (
             <span className="trace-badge trace-badge-target" title="影响路径追踪目标">
               目标
+            </span>
+          )}
+          {data.shapleyTarget && (
+            <span className="trace-badge shapley-badge-target" title="证据贡献分摊的目标观点">
+              分摊目标
             </span>
           )}
           {data.anchored && (

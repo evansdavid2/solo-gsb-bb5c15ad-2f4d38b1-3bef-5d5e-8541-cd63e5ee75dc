@@ -7,6 +7,7 @@ import { createGraphStore } from './db.js';
 import { propagateBeliefs, validateGraphDocument, validateOptions } from './propagation.js';
 import { scanEdgeWeightSensitivity, validateSamples, validateSensitivitySelection } from './sensitivity.js';
 import { traceInfluencePaths, validateMaxHops, validateTraceSelection } from './trace.js';
+import { allocateEvidenceContribution, validateShapleySelection } from './shapley.js';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(currentDir, '../..');
 const port = Number(process.env.PORT ?? 8080);
@@ -77,6 +78,23 @@ app.post('/api/trace/influence-paths', (request, response) => {
     }
     catch (error) {
         response.status(400).json({ error: error instanceof Error ? error.message : '影响路径追踪请求无效。' });
+    }
+});
+// 证据贡献分摊：使用请求体携带的当前画布图，在内存中对全部证据联盟重算传播，绝不保存或修改持久化图。
+app.post('/api/shapley/evidence-contribution', (request, response) => {
+    try {
+        const candidate = request.body?.graph;
+        if (candidate === undefined || candidate === null) {
+            throw new Error('请求体必须携带当前图 graph（分摊不会保存该图）。');
+        }
+        const graph = validateGraphDocument(candidate);
+        validateShapleySelection(graph, request.body?.targetNodeId, request.body?.evidenceNodeIds);
+        const options = validateOptions(request.body?.options);
+        const shapley = allocateEvidenceContribution(graph, request.body.targetNodeId, request.body.evidenceNodeIds, options);
+        response.json({ shapley });
+    }
+    catch (error) {
+        response.status(400).json({ error: error instanceof Error ? error.message : '证据贡献分摊请求无效。' });
     }
 });
 if (existsSync(staticDirectory)) {

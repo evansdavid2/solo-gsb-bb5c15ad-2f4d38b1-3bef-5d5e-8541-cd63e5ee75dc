@@ -187,3 +187,79 @@ export interface TraceRequest {
   /** 最大跳数，默认 8，范围 1–8 */
   maxHops?: number;
 }
+
+/** 证据贡献分摊允许选择的最大证据节点数（联盟数 2^n 随 n 指数增长） */
+export const MAX_SHAPLEY_EVIDENCE = 8;
+
+/** 证据贡献分摊中首个未收敛联盟的状态：持续振荡 / 达到迭代上限 */
+export type ShapleyFailureStatus = 'oscillating' | 'limit';
+
+export interface ShapleyContribution {
+  nodeId: string;
+  /** 精确 Shapley 值：v(全联盟) − v(空联盟) 分摊到该证据的有符号贡献 */
+  contribution: number;
+  /** 贡献占总差值 v(全联盟) − v(空联盟) 的比例；总差值约为 0 时无意义，为 null */
+  share: number | null;
+}
+
+export interface ShapleyFailure {
+  /** 首个未收敛联盟的成员证据 id（按节点 id 排序；空数组表示空联盟） */
+  coalition: string[];
+  status: ShapleyFailureStatus;
+  /** 该联盟传播停止轮次 */
+  iterations: number;
+  /** 检测到的振荡周期（仅振荡时可能非空） */
+  detectedPeriod: number | null;
+  /** 最后一轮的最大节点变化 */
+  maxChange: number;
+  /** 未收敛原因说明 */
+  reason: string;
+}
+
+export interface ShapleySumCheck {
+  /** Σφ_i：全部证据 Shapley 贡献之和 */
+  sum: number;
+  /** 期望等于 v(全联盟) − v(空联盟) */
+  expected: number;
+  /** sum − expected（浮点误差量级） */
+  difference: number;
+  /** |difference| 是否在 1e-9 容差内 */
+  ok: boolean;
+}
+
+export interface ShapleyResult {
+  /** 全部 2^n 个联盟均收敛时为 true 并给出分摊；任一联盟振荡或达到上限时为 false */
+  computable: boolean;
+  targetNodeId: string;
+  /** 参与分摊的证据节点 id（按节点 id 排序，与联盟位号一致） */
+  evidenceNodeIds: string[];
+  /** 联盟总数 2^n */
+  coalitionCount: number;
+  /** 实际执行过传播的联盟数（不可计算时含首个失败联盟） */
+  coalitionsEvaluated: number;
+  /** 空联盟目标值（基准）；不可计算时为 null */
+  baselineValue: number | null;
+  /** 全联盟目标值；不可计算时为 null */
+  fullValue: number | null;
+  /** fullValue − baselineValue；不可计算时为 null */
+  totalDelta: number | null;
+  /** 按 |贡献| 降序、节点 id 稳定排序的分摊结果（不可计算时为空数组） */
+  contributions: ShapleyContribution[];
+  /** 和式校验 Σφ_i = v(全联盟) − v(空联盟)；不可计算时为 null */
+  sumCheck: ShapleySumCheck | null;
+  /** 首个未收敛联盟（computable 为 false 时非空） */
+  failure: ShapleyFailure | null;
+  /** 本次分摊实际使用的传播参数 */
+  options: Required<PropagateOptions>;
+  message: string;
+}
+
+export interface ShapleyRequest {
+  /** 画布当前图：仅在内存中用于本次分摊，不会被保存或持久化 */
+  graph: GraphDocument;
+  /** 目标观点节点 id（kind 必须为 claim） */
+  targetNodeId: string;
+  /** 参与分摊的证据节点 id（1–8 个，kind 必须为 evidence，不得重复） */
+  evidenceNodeIds: string[];
+  options?: PropagateOptions;
+}

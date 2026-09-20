@@ -3,6 +3,7 @@ import type {
   PropagateOptions,
   PropagateResult,
   SensitivityResult,
+  ShapleyResult,
   TraceResult
 } from '../../shared/graph';
 
@@ -47,6 +48,17 @@ export const api = {
     maxHops?: number;
   }) =>
     request<{ trace: TraceResult }>('/api/trace/influence-paths', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  /** 证据贡献分摊：提交当前画布图，对全部证据联盟重算传播，仅在服务端内存中计算，不会保存图。 */
+  computeShapley: (payload: {
+    graph: GraphDocument;
+    targetNodeId: string;
+    evidenceNodeIds: string[];
+    options: PropagateOptions;
+  }) =>
+    request<{ shapley: ShapleyResult }>('/api/shapley/evidence-contribution', {
       method: 'POST',
       body: JSON.stringify(payload)
     })
